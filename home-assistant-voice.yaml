@@ -29,8 +29,8 @@ substitutions:
   center_button_long_press_sound_file: https://github.com/esphome/home-assistant-voice-pe/raw/dev/sounds/center_button_long_press.flac
 
 esphome:
-  name: home-assistant-voice
-  friendly_name: Home Assistant Voice
+  name: nuboid-1
+  friendly_name: Nuboid Prime
   name_add_mac_suffix: true
   min_version: 2025.11.0
   on_boot:
@@ -82,6 +82,8 @@ wifi:
     - script.execute: control_leds
   on_disconnect:
     - script.execute: control_leds
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
 
 network:
   enable_ipv6: true
@@ -279,7 +281,7 @@ binary_sensor:
       #     - Announcements
       #     - Voice Assistant Pipeline run
       #     - Music
-      #   - Starts the voice assistant if it is not yet running and if the device is not muted.
+      #   - Expose Single Click action to Home Assistant
       - timing:
           - ON for at most 1s
           - OFF for at least 0.25s
@@ -313,21 +315,15 @@ binary_sensor:
                                       then:
                                         - media_player.pause:
                                       else:
-                                        - if:
-                                            condition:
-                                              and:
-                                                - switch.is_off: master_mute_switch
-                                                - not:
-                                                    voice_assistant.is_running
-                                            then:
-                                              - script.execute:
-                                                  id: play_sound
-                                                  priority: true
-                                                  sound_file: !lambda return id(center_button_press_sound);
-                                              - delay: 300ms
-                                              - voice_assistant.start:
+                                        - script.execute:
+                                            id: play_sound
+                                            priority: true
+                                            sound_file: !lambda return id(center_button_press_sound);
+                                        - event.trigger:
+                                            id: button_press_event
+                                            event_type: "single_press"
       # Double Click
-      #  . Exposed as an event entity. To be used in automations inside Home Assistant
+      #  - Starts the voice assistant if it is not yet running and if the device is not muted.
       - timing:
           - ON for at most 1s
           - OFF for at most 0.25s
@@ -338,13 +334,19 @@ binary_sensor:
               condition:
                 lambda: return !id(init_in_progress) && !id(color_changed);
               then:
-                - script.execute:
-                    id: play_sound
-                    priority: false
-                    sound_file: !lambda return id(center_button_double_press_sound);
-                - event.trigger:
-                    id: button_press_event
-                    event_type: "double_press"
+                - if:
+                    condition:
+                      and:
+                        - switch.is_off: master_mute_switch
+                        - not:
+                            voice_assistant.is_running
+                    then:
+                      - script.execute:
+                          id: play_sound
+                          priority: false
+                          sound_file: !lambda return id(center_button_double_press_sound);
+                      - delay: 300ms
+                      - voice_assistant.start:
       # Triple Click
       #  . Exposed as an event entity. To be used in automations inside Home Assistant
       - timing:
@@ -373,7 +375,7 @@ binary_sensor:
         then:
           - if:
               condition:
-                lambda: return !id(init_in_progress) && !id(color_changed);
+                lambda: return !id(init_in_progress) && !id(color_changed) && !id(dial_touched);
               then:
                 - script.execute:
                     id: play_sound
@@ -942,7 +944,7 @@ power_supply:
     pin: GPIO45
 
 sensor:
-  # The dial. Used to control volume and Hue of the LED ring.
+  # The dial. Used to control volume and the Rotary Control Variable exposed to Home Assistant.
   - platform: rotary_encoder
     id: dial
     pin_a: GPIO16
@@ -955,12 +957,12 @@ sensor:
             binary_sensor.is_off: center_button
           then:
             - script.execute:
-                id: control_volume
-                increase_volume: true
+                id: control_rotary_variable
+                increase_rotary_variable: true
           else:
             - script.execute:
-                id: control_hue
-                increase_hue: true
+                id: control_volume
+                increase_volume: true
     on_anticlockwise:
       - lambda: id(dial_touched) = true;
       - if:
@@ -968,26 +970,37 @@ sensor:
             binary_sensor.is_off: center_button
           then:
             - script.execute:
-                id: control_volume
-                increase_volume: false
+                id: control_rotary_variable
+                increase_rotary_variable: false
           else:
             - script.execute:
-                id: control_hue
-                increase_hue: false
+                id: control_volume
+                increase_volume: false
+            
 
 event:
   # Event entity exposed to the user to automate on complex center button presses.
-  # The simple press is not exposed as it is used to control the device itself.
+  # The double press is not exposed as it is used to control the device itself.
   - platform: template
     id: button_press_event
     name: "Button press"
     icon: mdi:button-pointer
     device_class: button
     event_types:
-      - double_press
+      - single_press
       - triple_press
       - long_press
       - easter_egg_press
+  # Event entity exposed to the user to automate on rotary touch events.
+  - platform: template
+    id: rotary_touch_event
+    name: "Rotary Touch"
+    icon: mdi:button-pointer
+    device_class: button
+    event_types: 
+      - clockwise_spin
+      - counter_clockwise_spin
+      - rotary_touched
 
 script:
   # Master script controlling the LEDs, based on different conditions : initialization in progress, wifi and api connected and voice assistant phase.
@@ -1251,6 +1264,29 @@ script:
             - media_player.volume_down:
       - script.execute: control_leds
       - delay: 1s
+      - lambda: id(dial_touched) = false;
+      - sensor.rotary_encoder.set_value:
+          id: dial
+          value: 0
+      - script.execute: control_leds
+
+  # Script executed when the rotary variable is increased/decreased from the dial
+  - id: control_rotary_variable
+    mode: restart
+    parameters:
+      increase_rotary_variable: bool  # True: Increase rotary variable / False: decrease rotary variable
+    then:
+      - delay: 16ms
+      - if:
+          condition:
+            lambda: return increase_rotary_variable;
+          then:
+            - 
+            #TODO
+          else:
+            -
+      - script.execute: control_leds
+      - delay: 10s
       - lambda: id(dial_touched) = false;
       - sensor.rotary_encoder.set_value:
           id: dial
