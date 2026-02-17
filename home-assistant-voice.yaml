@@ -146,12 +146,12 @@ globals:
   - id: dial_value
     type: float
     restore_value: no
-    initial_value: "5.0"
+    initial_value: "0.75"
   # Global variable tracking step size of rotary dial movement
   - id: dial_step
     type: float
     restore_value: no
-    initial_value: "0.83"
+    initial_value: "0.083"
   # Global variable tracking if the LED color was recently changed.
   - id: color_changed
     type: bool
@@ -333,7 +333,7 @@ binary_sensor:
                                             id: button_press_event
                                             event_type: "single_press"
       # Double Click
-      #  - Starts the voice assistant if it is not yet running and if the device is not muted.
+      #  - Exposed as an event entity. To be used in automations inside Home Assistant
       - timing:
           - ON for at most 1s
           - OFF for at most 0.25s
@@ -344,19 +344,13 @@ binary_sensor:
               condition:
                 lambda: return !id(init_in_progress) && !id(color_changed);
               then:
-                - if:
-                    condition:
-                      and:
-                        - switch.is_off: master_mute_switch
-                        - not:
-                            voice_assistant.is_running
-                    then:
-                      - script.execute:
-                          id: play_sound
-                          priority: false
-                          sound_file: !lambda return id(center_button_double_press_sound);
-                      - delay: 300ms
-                      - voice_assistant.start:
+                - script.execute:
+                    id: play_sound
+                    priority: false
+                    sound_file: !lambda return id(center_button_double_press_sound);
+                - event.trigger:
+                    id: button_press_event
+                    event_type: "double_press"
       # Triple Click
       #  . Exposed as an event entity. To be used in automations inside Home Assistant
       - timing:
@@ -1017,6 +1011,7 @@ event:
     device_class: button
     event_types:
       - single_press
+      - double_press
       - triple_press
       - long_press
       - easter_egg_press
@@ -1052,7 +1047,7 @@ script:
             id(control_leds_init_state).execute();
           } else if (!id(wifi_id).is_connected() || !id(api_id).is_connected()){
             id(control_leds_no_ha_connection_state).execute();
-          } else if (id(center_button).state) {
+          } else if (id(center_button).state && !id(dial_touched)) {
             id(control_leds_center_button_touched).execute();
           } else if (id(jack_plugged_recently)) {
             id(control_leds_jack_plugged_recently).execute();
@@ -1235,12 +1230,12 @@ script:
             - light.turn_on:
                 brightness: !lambda return max( id(led_ring).current_values.get_brightness() , 0.2f );
                 id: voice_assistant_leds
-                effect: "Volume Display"
+                effect: "Dial Value Display"
           else:
             - light.turn_on:
                 brightness: !lambda return max( id(led_ring).current_values.get_brightness() , 0.2f );
                 id: voice_assistant_leds
-                effect: "Dial Value Display"
+                effect: "Volume Display"
 
   # Script executed when the jack has just been unplugged
   # A ripple effect
@@ -1264,10 +1259,14 @@ script:
   # The complete LED ring turns on
   - id: control_leds_center_button_touched
     then:
-      - light.turn_on:
-          brightness: !lambda return min ( max( id(led_ring).current_values.get_brightness() , 0.2f ) + 0.1f , 1.0f );
-          id: voice_assistant_leds
-          effect: "Center Button Touched"
+      - if:
+          condition:
+            lambda: return !id(dial_touched);
+          then:
+            - light.turn_on:
+                brightness: !lambda return min ( max( id(led_ring).current_values.get_brightness() , 0.2f ) + 0.1f , 1.0f );
+                id: voice_assistant_leds
+                effect: "Center Button Touched"
 
   # Script executed when the timer is ringing, to control the LEDs
   # The LED ring blinks.
@@ -1320,10 +1319,9 @@ script:
           condition:
             lambda: return increase_rotary_variable;
           then:
-            - 
-            #TODO
+            - lambda: id(dial_value) += id(dial_step);
           else:
-            -
+            - lambda: id(dial_value) -= id(dial_step);
       - script.execute: control_leds
       - delay: 10s
       - lambda: id(dial_touched) = false;
