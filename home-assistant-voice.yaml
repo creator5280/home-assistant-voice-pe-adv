@@ -137,11 +137,21 @@ globals:
     type: int
     restore_value: no
     initial_value: ${voice_assist_not_ready_phase_id}
-  # Global variable tracking if the dial was recently touched.
+  # Global variable tracking if the dial was recently touched regardless of button
   - id: dial_touched
     type: bool
     restore_value: no
     initial_value: 'false'
+  # Global variable tracking virtual value of dial
+  - id: dial_value
+    type: float
+    restore_value: no
+    initial_value: "5.0"
+  # Global variable tracking step size of rotary dial movement
+  - id: dial_step
+    type: float
+    restore_value: no
+    initial_value: "0.83"
   # Global variable tracking if the LED color was recently changed.
   - id: color_changed
     type: bool
@@ -731,6 +741,25 @@ light:
               it[6] = silenced_color;
             }
       - addressable_lambda:
+          name: "Dial Value Display"
+          update_interval: 50ms
+          lambda: |-
+            auto light_color = id(led_ring).current_values;
+            Color color(light_color.get_red() * 255, light_color.get_green() * 255,
+                  light_color.get_blue() * 255);
+            Color silenced_color(255, 0, 0);
+            auto value_ratio = 12.0f * id(dial_value);
+            for (uint8_t i = 0; i < 12; i++) {
+              if (i <= value_ratio) {
+                it[(6+i)%12] = color * min( 255.0f * (value_ratio - i) , 255.0f ) ;
+              } else {
+                it[(6+i)%12] = Color::BLACK;
+              }
+            }
+            if (id(dial_value) == 0.0f) {
+              it[6] = silenced_color;
+            }
+      - addressable_lambda:
           name: "Center Button Touched"
           update_interval: 16ms
           lambda: |-
@@ -1195,13 +1224,23 @@ script:
           effect: "Twinkle"
 
   # Script executed when the dial is touched
-  # A number of LEDs turn on indicating a visual representation of the volume of the media player entity.
+  # A number of LEDs turn on indicating a visual representation of the volume of the media player entity,
+  # or the value of the rotary virtual dial
   - id: control_leds_dial_touched
     then:
-      - light.turn_on:
-          brightness: !lambda return max( id(led_ring).current_values.get_brightness() , 0.2f );
-          id: voice_assistant_leds
-          effect: "Volume Display"
+      - if:
+          condition:
+            binary_sensor.is_off: center_button
+          then:
+            - light.turn_on:
+                brightness: !lambda return max( id(led_ring).current_values.get_brightness() , 0.2f );
+                id: voice_assistant_leds
+                effect: "Volume Display"
+          else:
+            - light.turn_on:
+                brightness: !lambda return max( id(led_ring).current_values.get_brightness() , 0.2f );
+                id: voice_assistant_leds
+                effect: "Dial Value Display"
 
   # Script executed when the jack has just been unplugged
   # A ripple effect
